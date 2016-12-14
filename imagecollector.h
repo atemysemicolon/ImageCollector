@@ -67,7 +67,6 @@ cv::Mat parseAnnotationKitti(cv::Mat &ann_img)
 {
     cv::Mat ann = cv::Mat(ann_img.rows, ann_img.cols, CV_8U);
     cv::Vec3b color = cv::Vec3b(0,0,255);
-
     for (int x = 0;x<ann_img.cols;x++)
         for(int y=0;y<ann_img.rows;y++)
         {
