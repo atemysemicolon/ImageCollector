@@ -73,7 +73,7 @@ cv::Mat parseAnnotationKitti(cv::Mat &ann_img)
             ann.at<uchar> (y,x) = (ann_img.at<cv::Vec3b>(y,x)  == color);
         }
 
-    std::cout<<ann;
+    std::cout<<ann<<std::endl;
 
     return ann.clone();
 }
