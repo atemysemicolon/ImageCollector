@@ -72,24 +72,165 @@ cv::Mat parseAnnotationKitti(cv::Mat &ann_img)
         {
             ann.at<uchar> (y,x) = (ann_img.at<cv::Vec3b>(y,x)  == color);
         }
-
-    std::cout<<ann<<std::endl;
-
+    ann=1-ann;
     return ann.clone();
 }
 
+
+
+
+//not radius exactly, but half the edge of the square region
+cv::Mat getSelectedRegion(cv::Mat &img, cv::Point p,int radius)
+{
+    cv::Mat reg;
+    int x,y,w,h;
+    x = (p.x-radius);
+    y = p.y-radius;
+
+    int radius_x=radius;
+    int radius_y = radius;
+    bool flag_change_radius=false;
+    int x_stored;
+    int y_stored;
+
+    if(x<0) {
+        radius_x += x;
+        x = 0;
+    }
+    if(y<0){
+        radius_y+=y;
+        y=0;
+    }
+
+    w=radius_x*2;
+    h=radius_y*2;
+
+    if((x+w)>img.cols)
+        w=img.cols-x;
+    if((h+y)>img.rows)
+        h=img.rows-y;
+
+    cv::Rect roi = cv::Rect(x,y,w,h);
+    reg = img(roi);
+    return reg.clone();
+
+}
+
+
+
+cv::Scalar getAveragePixelValue(cv::Mat &region)
+{
+    cv::Scalar s = cv::mean(region);
+    return s;
+}
+
+
+int  getFrequentPixelValue(cv::Mat &region)
+{
+
+    int histSize = 2;
+    float range[] = { 0, 1 } ;
+    const float* histRange = { range };
+    bool uniform = true; bool accumulate = false;
+    cv::Mat hist;
+    calcHist( &region, 1, 0, cv::Mat(), hist, 1, &histSize, &histRange, uniform, accumulate );
+
+
+    double min, max;
+    cv::Point min_loc, max_loc;
+
+    cv::minMaxLoc(hist, &min, &max, &min_loc, &max_loc);
+
+    //int ret = (int)max_loc.x;
+    return ((int)max_loc.x);
+}
+
+std::vector<cv::Mat> parseAllAnnotations(std::vector<cv::Mat> &annimgs)
+{
+    std::vector<cv::Mat> annParsed;
+
+    for (cv::Mat ann : annimgs)
+    {
+        annParsed.push_back(parseAnnotationKitti(ann));
+    }
+    return annParsed;
+}
+
+std::vector<cv::Mat> getRegionsFromVector(std::vector<cv::Mat> &imgs, cv::Point p,int radius)
+{
+    std::vector<cv::Mat> regions;
+    for ( cv::Mat img : imgs )
+    {
+        regions.push_back(getSelectedRegion(img,p,radius));
+    }
+    return regions;
+}
+
+
+std::vector<int> getRegionGts(std::vector<cv::Mat> &regions)
+{
+    std::vector<int> gts;
+    for ( cv::Mat reg : regions)
+    {
+        gts.push_back(getFrequentPixelValue(reg));
+    }
+
+    return gts;
+}
+
+
+std::vector<cv::Scalar> getRegionDescs(std::vector<cv::Mat> &regions)
+{
+    std::vector<cv::Scalar> descs;
+
+    for(cv::Mat reg : regions)
+    {
+        descs.push_back(getAveragePixelValue(reg));
+    }
+    return descs;
+
+}
+
+
 int main()
 {
-    std::string train_loc = "/home/prassanna/Development/Datasets/Dataset_Kitti/training/Train.txt";
-    std::string image_loc ="/home/prassanna/Development/Datasets/Dataset_Kitti/training/image_2/";
-    std::string ann_loc = "/home/prassanna/Development/Datasets/Dataset_Kitti/training/gt_images_2/";
+    std::string train_loc = "/home/prassanna/Development/workspace/NewKerasFramework/SuperDatasets/Dataset_Kitti/training/Train.txt";
+    std::string image_loc ="/home/prassanna/Development/workspace/NewKerasFramework/SuperDatasets/Dataset_Kitti/training/image_2/";
+    std::string ann_loc = "/home/prassanna/Development/workspace/NewKerasFramework/SuperDatasets/Dataset_Kitti/training/gt_images_2/";
     std::vector<std::string> fnames = getFilenames(train_loc);
+
     //std::string fname = getImageName(0,image_loc, fnames);
+
     std::vector<std::string>  image_files = appendList(image_loc,fnames);
     std::vector<std::string>  ann_files = appendList(ann_loc,fnames);
 
+    //Image files
     std::vector<cv::Mat> image_data = loadImages(image_files);
     std::vector<cv::Mat> ann_data = loadImages(ann_files); //Expect Parsed
-    parseAnnotationKitti(ann_data[0]);
+    //cv::Mat annimg = parseAnnotationKitti(ann_data[0]);
+    ann_data = parseAllAnnotations(ann_data);
+
+
+    //imgs->image_data
+    //anns->ann_data
+    //regions in regions_img and regions_ann
+
+    std::vector<cv::Mat> regions_img = getRegionsFromVector(image_data,cv::Point(10,10), 100);
+    std::vector<cv::Mat> regions_ann = getRegionsFromVector(ann_data,cv::Point(300,300), 100);
+
+    std::vector<int> gt_regions =getRegionGts(regions_ann);
+    std::vector<cv::Scalar> desc_regions = getRegionDescs(regions_img);
+
+    for(int i=0;i<5;i++)
+    {
+        std::cout<<desc_regions[i]<<std::endl;
+    }
+
+
+    //cv::imshow("Region",ann_data[0]*255);
+    //cv::waitKey();
+
+    //All images and annotations have been selected
+
     return 0;
 }
