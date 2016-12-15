@@ -4,6 +4,8 @@
 #include <opencv2/opencv.hpp>
 #include <vector>
 #include <fstream>
+#include "feature.h"
+
 #ifndef PROJECT_IMAGECOLLECTOR_H
 #define PROJECT_IMAGECOLLECTOR_H
 
@@ -192,6 +194,16 @@ std::vector<cv::Scalar> getRegionDescs(std::vector<cv::Mat> &regions)
 }
 
 
+//TODO : GEt all feature maps for one image and select the interesting one. Then make a function to do this for all regions
+std::vector<cv::Mat> getFeatureMap(cv::Mat &region, std::vector<int> &kernels, CaffeModel &fe)
+{
+    std::vector<cv::Mat> selected_mats;
+
+
+
+    return selected_mats;
+}
+
 int main()
 {
     std::string train_loc = "/home/prassanna/Development/workspace/NewKerasFramework/SuperDatasets/Dataset_Kitti/training/Train.txt";
@@ -221,14 +233,23 @@ int main()
     std::vector<int> gt_regions =getRegionGts(regions_ann);
     std::vector<cv::Scalar> desc_regions = getRegionDescs(regions_img);
 
-    for(int i=0;i<5;i++)
-    {
-        std::cout<<desc_regions[i]<<std::endl;
-    }
 
 
-    //cv::imshow("Region",ann_data[0]*255);
-    //cv::waitKey();
+
+    //Feature Inits
+    int layer_nr = 1;
+    std::string model_file="/home/prassanna/Libraries/caffe-master/models/bvlc_alexnet/deploy_small.prototxt";
+    std::string trained_file="/home/prassanna/Libraries/caffe-master/models/bvlc_alexnet/bvlc_alexnet.caffemodel";
+    std::string mean_file = "";
+    std::string label_file="/home/prassanna/Libraries/caffe-master/data/ilsvrc12/synset_words.txt";
+    std::vector<int> kernels = {1,2,3};
+    CaffeModel classifier(model_file, trained_file, mean_file, label_file);
+    std::vector<cv::Mat> hc = classifier.forwardPassRescaleImg(regions_img[0],1);
+
+    //std::cout<<hc[0]<<std::endl;
+
+    cv::imshow("Region",hc[0]*255);
+    cv::waitKey();
 
     //All images and annotations have been selected
 
