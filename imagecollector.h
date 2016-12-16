@@ -5,6 +5,12 @@
 #include <vector>
 #include <fstream>
 #include "feature.h"
+#include <opencv2/opencv.hpp>
+#include <opencv2/ml.hpp>
+#include <cstdlib>
+#include <ctime>
+namespace cvml = cv::ml;
+
 
 #ifndef PROJECT_IMAGECOLLECTOR_H
 #define PROJECT_IMAGECOLLECTOR_H
@@ -48,13 +54,19 @@ std::vector<std::string> appendList(std::string prefix, std::vector<std::string>
     }
     return fnames;
 }
-std::vector<cv::Mat> loadImages(std::vector<std::string> &filenames)
+std::vector<cv::Mat> loadImages(std::vector<std::string> &filenames, int &min_width, int &min_height)
 {
     cv::Mat img;
     std::vector<cv::Mat> imgs;
     for (std::string fname : filenames )
     {
         img = cv::imread(fname);
+
+        if(img.cols<min_width)
+            min_width = img.cols;
+        if(img.rows<min_height)
+            min_height=img.rows;
+
         imgs.push_back(img);
     }
 
@@ -120,8 +132,11 @@ cv::Mat getSelectedRegion(cv::Mat &img, cv::Point p,int radius)
 
 
 
+
+//Works only with max 4 channel image. TODO: Make general purpose
 cv::Scalar getAveragePixelValue(cv::Mat &region)
 {
+    //std::cout<<region<<std::endl;
     cv::Scalar s = cv::mean(region);
     return s;
 }
@@ -180,8 +195,9 @@ cv::Mat getRegionGts(std::vector<cv::Mat> &regions)
     cv::Mat gts(regions.size(),1,CV_8UC1);
     for (int i = 0;i<regions.size();i++)
         gts.at<uchar>(i) = (uchar)getFrequentPixelValue(regions[i]);
-
-    return gts;
+    cv::Mat gts_alt;
+    gts.convertTo(gts_alt, CV_32SC1);
+    return gts_alt.clone();
 }
 
 
@@ -196,7 +212,9 @@ cv::Mat getRegionDescs(std::vector<cv::Mat> &regions)
         cv::transpose(temp_desc,temp_desc);
         descs.push_back(temp_desc);
     }
-    return descs;
+    cv::Mat alt_desc;
+    descs.convertTo(alt_desc, CV_32FC1);
+    return alt_desc.clone();
 
 }
 
@@ -231,11 +249,42 @@ std::vector<cv::Mat> getAllFeatureMaps(std::vector<cv::Mat> &regions, std::vecto
     return fmaps;
 }
 
+void trainSvm(cv::Mat &data, cv::Mat &gt)
+{
+    cv::Ptr<cvml::SVM> svm;
+    svm = cvml::SVM::create();
+    svm->setType(cvml::SVM::C_SVC);
+    svm->setKernel(cvml::SVM::LINEAR);
+    svm->setTermCriteria(cv::TermCriteria(cv::TermCriteria::MAX_ITER+cv::TermCriteria::EPS, 1000, 0.01));
+    svm->setC(0.5);
+
+    cv::Ptr<cvml::TrainData> tdata = cvml::TrainData::create(data, cvml::ROW_SAMPLE, cv::Mat(gt));
+
+    svm->train(tdata);
+
+
+    if(svm->isTrained())
+        std::cout<<"Trained"<<std::endl;
+    cv::Mat alpha, wts;
+    std::cout<<"Bias : "<<( -1 * (float)svm->getDecisionFunction(0, alpha, wts))<<std::endl;
+    cv::Mat svs = svm->getSupportVectors();
+    for(int j=0;j<svs.cols;j++)
+        std::cout<< (svs.at<float>(j))<<", ";
+
+    std::cout<<std::endl;
+    svm->clear();
+    tdata.release();
+
+}
 
 //Todo :: Change functions getFrequentPixelValue and parseAnnotationKitti to work for general cases
 
 int main()
 {
+
+    /////GENERAL OPERATIONS////
+    //imgs->image_data
+    //anns->ann_data
     //general inits
     std::string train_loc = "/home/prassanna/Development/workspace/NewKerasFramework/SuperDatasets/Dataset_Kitti/training/Train.txt";
     std::string image_loc ="/home/prassanna/Development/workspace/NewKerasFramework/SuperDatasets/Dataset_Kitti/training/image_2/";
@@ -257,36 +306,83 @@ int main()
     std::vector<std::string>  ann_files = appendList(ann_loc,fnames);
 
     //Image files
-    std::vector<cv::Mat> image_data = loadImages(image_files);
-    std::vector<cv::Mat> ann_data = loadImages(ann_files); //Expect Parsed
+    int min_h = 10000;
+    int min_w = 10000;
+    std::vector<cv::Mat> image_data = loadImages(image_files,min_w,min_h);
+    std::vector<cv::Mat> ann_data = loadImages(ann_files,min_w,min_h); //Expect Parsed
+    int min_dim = min_h<min_w?min_h:min_w;
     //cv::Mat annimg = parseAnnotationKitti(ann_data[0]);
     ann_data = parseAllAnnotations(ann_data);
 
+    //Variables go here
 
-    //imgs->image_data
-    //anns->ann_data
+
+
+    srand (time(NULL));
+    /////Per Region Operations OPERATIONS -> Each Node////
+
+    //Node Inits
     //regions in regions_img and regions_ann
+    for(int num_its=0;num_its<4;num_its++)
+    {
+        //Select Random Parameters
+        std::cout<<" ITERATION : "<<num_its<<std::endl;
+        int random_size = (rand()%min_dim)/2;
+        int random_x = rand()%min_w;
+        int random_y = rand()%min_h;
+        cv::Point random_pt = cv::Point(random_x, 5);
 
-    std::vector<cv::Mat> regions_img = getRegionsFromVector(image_data,cv::Point(1000,300), 10);
-    std::vector<cv::Mat> regions_ann = getRegionsFromVector(ann_data,cv::Point(1000,300), 10);
+        int random_kernel_size = 1+rand()%4;
+        std::vector<int> kernels_selected;// = {1,2,3,32};
+        //select kernels randomly
+        for(int j = 0;j<random_kernel_size;j++)
+            kernels_selected.push_back(rand()%96);
+        std::cout<<" Parameters Selected : -"<<std::endl;
+        std::cout<<"Size : "<<random_size<<std::endl;
+        std::cout<<"Point: "<<random_pt<<std::endl;
+        std::cout<<"Kernels : ";
+        for (std::vector<int>::const_iterator i = kernels_selected.begin(); i != kernels_selected.end(); ++i)
+            std::cout << *i << ' ';
+        std::cout<<std::endl;
 
-    cv::Mat gt_regions =getRegionGts(regions_ann);
-    std::cout<<gt_regions<<gt_regions.rows<<", "<<gt_regions.cols<<std::endl;
-    //std::vector<cv::Scalar> desc_regions = getRegionDescs(regions_img);
+
+        //Node getdata
+        std::vector<cv::Mat> regions_img = getRegionsFromVector(image_data,cv::Point(1000,300), 10);
+        std::vector<cv::Mat> regions_ann = getRegionsFromVector(ann_data,cv::Point(1000,300), 10);
+
+        //Node GetRegions
+        cv::Mat annotations =getRegionGts(regions_ann);
+        std::cout<<"Feature Computation"<<std::endl;
+        std::vector<cv::Mat> fmaps = getAllFeatureMaps(regions_img,kernels_selected, classifier);
+        std::cout<<"Pooling into regions"<<std::endl;
+        cv::Mat data = getRegionDescs(fmaps);
+
+        //Node Train clf
+        std::cout<<"Training SVM"<<std::endl;
+
+        bool flag_continue = true;
+        trainSvm(data,annotations);
 
 
+        /*while(flag_continue)
+        {
+            try
+            {
+                flag_continue=true;
 
+            }
+            catch(cv::Exception& e)
+            {
+                std::cout<<"Failed";
+                flag_continue = true;
+            }
+        std::cout<<"Trained SVM"<<std::endl;
 
+        }*/
 
+    }
 
-    std::vector<int> kernels_selected = {1,2,3,32};
-
-
-    std::cout<<"Feature Computation"<<std::endl;
-    std::vector<cv::Mat> fmaps = getAllFeatureMaps(regions_img,kernels_selected, classifier);
-
-    std::cout<<"Pooling into regions"<<std::endl;
-    cv::Mat descriptors = getRegionDescs(fmaps);
+    ////Predict For One Image////
 
 
     //std::cout<<hc[0]<<std::endl;
