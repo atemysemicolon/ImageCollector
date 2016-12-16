@@ -194,7 +194,12 @@ cv::Mat getRegionGts(std::vector<cv::Mat> &regions)
 {
     cv::Mat gts(regions.size(),1,CV_8UC1);
     for (int i = 0;i<regions.size();i++)
+    {
         gts.at<uchar>(i) = (uchar)getFrequentPixelValue(regions[i]);
+        //cv::imshow("regions", regions[i]);
+        //cv::waitKey();
+        //std::cout<<"."<<std::endl;
+    }
     cv::Mat gts_alt;
     gts.convertTo(gts_alt, CV_32SC1);
     return gts_alt.clone();
@@ -249,9 +254,12 @@ std::vector<cv::Mat> getAllFeatureMaps(std::vector<cv::Mat> &regions, std::vecto
     return fmaps;
 }
 
-void trainSvm(cv::Mat &data, cv::Mat &gt)
+std::vector<float> trainSvm(cv::Mat &data, cv::Mat &gt)
 {
     cv::Ptr<cvml::SVM> svm;
+    std::vector<float> weights;
+    weights.resize(4+1, 0.0);
+    int w = 0;
     svm = cvml::SVM::create();
     svm->setType(cvml::SVM::C_SVC);
     svm->setKernel(cvml::SVM::LINEAR);
@@ -262,20 +270,43 @@ void trainSvm(cv::Mat &data, cv::Mat &gt)
 
     svm->train(tdata);
 
-
+    //Debug and extract weights
     if(svm->isTrained())
+    {
         std::cout<<"Trained"<<std::endl;
-    cv::Mat alpha, wts;
-    std::cout<<"Bias : "<<( -1 * (float)svm->getDecisionFunction(0, alpha, wts))<<std::endl;
-    cv::Mat svs = svm->getSupportVectors();
-    for(int j=0;j<svs.cols;j++)
-        std::cout<< (svs.at<float>(j))<<", ";
+        cv::Mat alpha, wts;
+        std::cout<<"Bias : "<<( -1 * (float)svm->getDecisionFunction(0, alpha, wts))<<std::endl;
+        weights[w++] = ( -1 * (float)svm->getDecisionFunction(0, alpha, wts));
 
-    std::cout<<std::endl;
-    svm->clear();
-    tdata.release();
+        cv::Mat svs = svm->getSupportVectors();
+        for(int j=0;j<svs.cols;j++)
+        {
+            std::cout<< (svs.at<float>(j))<<", ";
+            weights[w++] = (svs.at<float>(j));
+        }
+
+
+
+        std::cout<<std::endl;
+        svm->clear();
+        tdata.release();
+    }
+
+    return weights;
 
 }
+
+struct params
+{
+    int size;
+    cv::Point p;
+    std::vector<int> kernels;
+    std::vector<float> weights;
+
+};
+
+
+
 
 //Todo :: Change functions getFrequentPixelValue and parseAnnotationKitti to work for general cases
 
@@ -323,20 +354,26 @@ int main()
 
     //Node Inits
     //regions in regions_img and regions_ann
-    for(int num_its=0;num_its<4;num_its++)
+    std::vector<params> params_all;
+    for(int num_its=0;num_its<1;num_its++)
     {
         //Select Random Parameters
         std::cout<<" ITERATION : "<<num_its<<std::endl;
-        int random_size = (rand()%min_dim)/2;
+        int random_size = (rand()%50)/2;
+
+        //TODO : Sample x and y better please
+        //int random_x = (min_w/2.0) + rand()%(min_w/2);
         int random_x = rand()%min_w;
         int random_y = rand()%min_h;
-        cv::Point random_pt = cv::Point(random_x, 5);
+        cv::Point random_pt = cv::Point(random_x, random_y);
 
         int random_kernel_size = 1+rand()%4;
         std::vector<int> kernels_selected;// = {1,2,3,32};
         //select kernels randomly
         for(int j = 0;j<random_kernel_size;j++)
             kernels_selected.push_back(rand()%96);
+
+
         std::cout<<" Parameters Selected : -"<<std::endl;
         std::cout<<"Size : "<<random_size<<std::endl;
         std::cout<<"Point: "<<random_pt<<std::endl;
@@ -347,21 +384,48 @@ int main()
 
 
         //Node getdata
-        std::vector<cv::Mat> regions_img = getRegionsFromVector(image_data,cv::Point(1000,300), 10);
-        std::vector<cv::Mat> regions_ann = getRegionsFromVector(ann_data,cv::Point(1000,300), 10);
+        std::vector<cv::Mat> regions_img = getRegionsFromVector(image_data,random_pt, random_size);
+        std::vector<cv::Mat> regions_ann = getRegionsFromVector(ann_data,random_pt, random_size);
+
+        //Do GT check. to make sure gt is all nice
+        cv::Mat annotations =getRegionGts(regions_ann);
+        //std::cout<<annotations<<std::endl;
+        int nr_zeros = cv::countNonZero(annotations);
+        int tot = annotations.rows*annotations.cols;
+        float factor = nr_zeros*1.0/tot;
+        if ((factor == 0) || (factor ==1))
+        {
+            num_its--;
+            std::cout<<" Bad GT, all are the same : "<<nr_zeros<<" / "<<tot<<std::endl;
+            continue;
+        }
+
+
+
 
         //Node GetRegions
-        cv::Mat annotations =getRegionGts(regions_ann);
         std::cout<<"Feature Computation"<<std::endl;
         std::vector<cv::Mat> fmaps = getAllFeatureMaps(regions_img,kernels_selected, classifier);
         std::cout<<"Pooling into regions"<<std::endl;
         cv::Mat data = getRegionDescs(fmaps);
 
+
+
+
+
+
         //Node Train clf
         std::cout<<"Training SVM"<<std::endl;
 
         bool flag_continue = true;
-        trainSvm(data,annotations);
+        std::vector<float> wts = trainSvm(data,annotations);
+
+        params_all.push_back(params());
+        params_all[num_its].size = random_size;
+        params_all[num_its].p = random_pt;
+        params_all[num_its].kernels= kernels_selected;
+        params_all[num_its].weights = wts;
+
 
 
         /*while(flag_continue)
@@ -382,7 +446,48 @@ int main()
 
     }
 
+    std::cout<<"Saved Parameters -size :"<<params_all.size()<<std::endl;
+
     ////Predict For One Image////
+    cv::Mat img = image_data[0];
+    cv::Mat ann = ann_data[0];
+    cv::Mat pred = cv::Mat::zeros(ann.rows,ann.cols, ann.type());
+
+
+    //First just for one node
+    params p = params_all[0];
+    int n_blks_x = img.cols / (p.size*2);
+    int n_blks_y = img.rows / (p.size*2);
+
+    std::vector<cv::Mat> regions;
+    //Dividing into regions -> grids
+
+    std::cout<<"Getting all regions"<<std::endl;
+    for(int i = 0;i<img.rows; i++)
+    {
+        for(int j= 0;j<img.cols;j++)
+        {
+            regions.push_back(getSelectedRegion(img, p.p, p.size));
+        }
+    }
+
+    std::cout<<"Getting all fMaps"<<std::endl;
+    std::vector<cv::Mat> fmaps = getAllFeatureMaps(regions, p.kernels, classifier);
+
+    std::cout<<"Pooling all descriptors"<<std::endl;
+    cv::Mat data = getRegionDescs(fmaps);
+    std::vector<double> res;
+    for(int row = 0;row<data.rows;row++)
+    {
+        cv::Mat dataRow = data.row(row);
+        double response =p.weights[0];
+        for(int i = 0;i<p.weights.size();i++)
+        {
+            response += p.weights[i+1]*dataRow.at<float>(i);
+        }
+        res.push_back(response);
+    }
+
 
 
     //std::cout<<hc[0]<<std::endl;
