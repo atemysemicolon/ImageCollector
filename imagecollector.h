@@ -127,6 +127,7 @@ cv::Scalar getAveragePixelValue(cv::Mat &region)
 }
 
 
+//Currently only works when used as gt. Only works for binary classification
 int  getFrequentPixelValue(cv::Mat &region)
 {
 
@@ -138,13 +139,18 @@ int  getFrequentPixelValue(cv::Mat &region)
     calcHist( &region, 1, 0, cv::Mat(), hist, 1, &histSize, &histRange, uniform, accumulate );
 
 
-    double min, max;
+    /*double min, max;
     cv::Point min_loc, max_loc;
-
     cv::minMaxLoc(hist, &min, &max, &min_loc, &max_loc);
+    int ret = (int)max_loc.x;
 
-    //int ret = (int)max_loc.x;
-    return ((int)max_loc.x);
+    std::cout<<hist.rows<<","<<hist.cols<<","<<hist.channels()<<std::endl;*/
+    if(hist.at<float>(0)>hist.at<float>(1))
+        return 0;
+    else
+        return 1;
+
+
 }
 
 std::vector<cv::Mat> parseAllAnnotations(std::vector<cv::Mat> &annimgs)
@@ -169,47 +175,81 @@ std::vector<cv::Mat> getRegionsFromVector(std::vector<cv::Mat> &imgs, cv::Point 
 }
 
 
-std::vector<int> getRegionGts(std::vector<cv::Mat> &regions)
+cv::Mat getRegionGts(std::vector<cv::Mat> &regions)
 {
-    std::vector<int> gts;
-    for ( cv::Mat reg : regions)
-    {
-        gts.push_back(getFrequentPixelValue(reg));
-    }
+    cv::Mat gts(regions.size(),1,CV_8UC1);
+    for (int i = 0;i<regions.size();i++)
+        gts.at<uchar>(i) = (uchar)getFrequentPixelValue(regions[i]);
 
     return gts;
 }
 
 
-std::vector<cv::Scalar> getRegionDescs(std::vector<cv::Mat> &regions)
+
+cv::Mat getRegionDescs(std::vector<cv::Mat> &regions)
 {
-    std::vector<cv::Scalar> descs;
+    cv::Mat descs;
 
     for(cv::Mat reg : regions)
     {
-        descs.push_back(getAveragePixelValue(reg));
+        cv::Mat temp_desc = cv::Mat(getAveragePixelValue(reg));
+        cv::transpose(temp_desc,temp_desc);
+        descs.push_back(temp_desc);
     }
     return descs;
 
 }
 
 
-//TODO : GEt all feature maps for one image and select the interesting one. Then make a function to do this for all regions
-std::vector<cv::Mat> getFeatureMap(cv::Mat &region, std::vector<int> &kernels, CaffeModel &fe)
+cv::Mat getFeatureMap(cv::Mat &region, std::vector<int> &kernels, CaffeModel &fe)
 {
     std::vector<cv::Mat> selected_mats;
+    std::vector<cv::Mat> hc = fe.forwardPassRescaleImg(region,1);
+
+    for(int i = 0;i<kernels.size();i++)
+        selected_mats.push_back(hc[kernels[i]]);
 
 
-
-    return selected_mats;
+    cv::Mat fmap;
+    cv::merge(selected_mats, fmap);
+    //std::cout<<fmap.rows<<","<<fmap.cols<<","<<fmap.channels()<<std::endl;
+    //cv::imshow("Feature map",selected_mats[0]*255);
+    //cv::waitKey();
+    return fmap.clone();
 }
+
+
+
+std::vector<cv::Mat> getAllFeatureMaps(std::vector<cv::Mat> &regions, std::vector<int> &kernels, CaffeModel &fe)
+{
+    std::vector<cv::Mat> fmaps;
+    for( cv::Mat reg : regions)
+    {
+        fmaps.push_back(getFeatureMap(reg, kernels, fe));
+    }
+
+    return fmaps;
+}
+
+
+//Todo :: Change functions getFrequentPixelValue and parseAnnotationKitti to work for general cases
 
 int main()
 {
+    //general inits
     std::string train_loc = "/home/prassanna/Development/workspace/NewKerasFramework/SuperDatasets/Dataset_Kitti/training/Train.txt";
     std::string image_loc ="/home/prassanna/Development/workspace/NewKerasFramework/SuperDatasets/Dataset_Kitti/training/image_2/";
     std::string ann_loc = "/home/prassanna/Development/workspace/NewKerasFramework/SuperDatasets/Dataset_Kitti/training/gt_images_2/";
     std::vector<std::string> fnames = getFilenames(train_loc);
+
+    //Feature Inits
+    int layer_nr = 1;
+    std::string model_file="/home/prassanna/Libraries/caffe-master/models/bvlc_alexnet/deploy_small.prototxt";
+    std::string trained_file="/home/prassanna/Libraries/caffe-master/models/bvlc_alexnet/bvlc_alexnet.caffemodel";
+    std::string mean_file = "";
+    std::string label_file="/home/prassanna/Libraries/caffe-master/data/ilsvrc12/synset_words.txt";
+    std::vector<int> kernels = {1,2,3};
+    CaffeModel classifier(model_file, trained_file, mean_file, label_file);
 
     //std::string fname = getImageName(0,image_loc, fnames);
 
@@ -227,29 +267,30 @@ int main()
     //anns->ann_data
     //regions in regions_img and regions_ann
 
-    std::vector<cv::Mat> regions_img = getRegionsFromVector(image_data,cv::Point(10,10), 100);
-    std::vector<cv::Mat> regions_ann = getRegionsFromVector(ann_data,cv::Point(300,300), 100);
+    std::vector<cv::Mat> regions_img = getRegionsFromVector(image_data,cv::Point(1000,300), 10);
+    std::vector<cv::Mat> regions_ann = getRegionsFromVector(ann_data,cv::Point(1000,300), 10);
 
-    std::vector<int> gt_regions =getRegionGts(regions_ann);
-    std::vector<cv::Scalar> desc_regions = getRegionDescs(regions_img);
+    cv::Mat gt_regions =getRegionGts(regions_ann);
+    std::cout<<gt_regions<<gt_regions.rows<<", "<<gt_regions.cols<<std::endl;
+    //std::vector<cv::Scalar> desc_regions = getRegionDescs(regions_img);
 
 
 
 
-    //Feature Inits
-    int layer_nr = 1;
-    std::string model_file="/home/prassanna/Libraries/caffe-master/models/bvlc_alexnet/deploy_small.prototxt";
-    std::string trained_file="/home/prassanna/Libraries/caffe-master/models/bvlc_alexnet/bvlc_alexnet.caffemodel";
-    std::string mean_file = "";
-    std::string label_file="/home/prassanna/Libraries/caffe-master/data/ilsvrc12/synset_words.txt";
-    std::vector<int> kernels = {1,2,3};
-    CaffeModel classifier(model_file, trained_file, mean_file, label_file);
-    std::vector<cv::Mat> hc = classifier.forwardPassRescaleImg(regions_img[0],1);
+
+
+    std::vector<int> kernels_selected = {1,2,3,32};
+
+
+    std::cout<<"Feature Computation"<<std::endl;
+    std::vector<cv::Mat> fmaps = getAllFeatureMaps(regions_img,kernels_selected, classifier);
+
+    std::cout<<"Pooling into regions"<<std::endl;
+    cv::Mat descriptors = getRegionDescs(fmaps);
+
 
     //std::cout<<hc[0]<<std::endl;
-
-    cv::imshow("Region",hc[0]*255);
-    cv::waitKey();
+    //cv::waitKey();
 
     //All images and annotations have been selected
 

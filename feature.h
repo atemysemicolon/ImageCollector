@@ -89,7 +89,7 @@ CaffeModel::CaffeModel(const string& model_file,
     /* Load the binaryproto mean file. */
     //std::cout<<"Not loading mean..."<<std::endl;
 
-    std::cout<<"Load the Labels."<<std::endl;
+    //std::cout<<"Load the Labels."<<std::endl;
     std::ifstream labels(label_file.c_str());
     CHECK(labels) << "Unable to open labels file " << label_file;
     string line;
@@ -292,14 +292,14 @@ void CaffeModel::Preprocess(const cv::Mat& img,
         sample = img;
 
     cv::Mat sample_resized;
-    std::cout<<"....Resizing"<<std::endl;
+    //std::cout<<"....Resizing"<<std::endl;
     if (sample.size() != input_geometry_)
         cv::resize(sample, sample_resized, input_geometry_);
     else
         sample_resized = sample;
 
     cv::Mat sample_float;
-    std::cout<<"....Converting"<<std::endl;
+    //std::cout<<"....Converting"<<std::endl;
     if (num_channels_ == 3)
         sample_resized.convertTo(sample_float, CV_32FC3);
     else
